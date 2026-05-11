@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test_t2.sh — Tests unitaires Tâche 2
-# Tâche : T2 | Responsable : (équipier T2)
+# Tâche : T2 | Responsable : khalid
 # Dépend de : lib/interfaces.sh, lib/subshell_exec.sh,
 #             lib/timeout_watcher.sh, lib/execute_secure.sh
 
