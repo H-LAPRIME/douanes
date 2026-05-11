@@ -46,7 +46,7 @@ douanes/
 |-------|-------|-------------|---------|--------|
 | T1 | Moteur d'Analyse & Scoring | *(prénom équipier 1)* | `feature/t1-scoring` | 🔲 À faire |
 | T2 | Exécution Sécurisée & Surveillance | *(prénom équipier 2)* | `feature/t2-exec` | 🔲 À faire |
-| T3 | Journalisation & Traçabilité | *(prénom équipier 3)* | `feature/t3-logs` | 🔲 À faire |
+| T3 | Journalisation & Traçabilité | **aymane** | `feature/t3-logs` | 🔲 À faire |
 | T4 | Gestion des Rôles & LLM | **H-LAPRIME** | `feature/t4-roles` | 🔲 À faire |
 
 ---
