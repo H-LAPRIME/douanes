@@ -6,6 +6,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Revenir au dossier d'origine utilisateur
+if [[ -n "${PWD_ORIG:-}" ]]; then
+    cd "$PWD_ORIG" || {
+        echo "[ERROR] Impossible d'acceder au repertoire utilisateur : $PWD_ORIG"
+        exit 1
+    }
+fi
 LIB_DIR="$SCRIPT_DIR/lib"
 PROGRAM_NAME="douanes"
 
@@ -78,11 +85,16 @@ die_with_help() {
 }
 
 default_log_dir() {
+
+    # Linux avec accès root
     if [[ -d /var/log && -w /var/log ]]; then
         echo "/var/log/$PROGRAM_NAME"
-    else
-        echo "logs"
+        return
     fi
+
+    # Git Bash / utilisateur normal
+    mkdir -p "$HOME/.douanes" 2>/dev/null || true
+    echo "$HOME/.douanes/logs"
 }
 
 init_history_logging() {
