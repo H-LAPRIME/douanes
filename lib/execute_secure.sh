@@ -28,6 +28,25 @@ if [[ -f "$EXECUTE_SECURE_DIR/analyze_command.sh" ]]; then
     source "$EXECUTE_SECURE_DIR/analyze_command.sh"
 fi
 
+prompt_confirm() {
+    local prompt="$1"
+    local answer
+
+    if [[ -r /dev/tty && -w /dev/tty ]]; then
+        printf "%s" "$prompt" > /dev/tty
+        if ! IFS= read -r answer < /dev/tty; then
+            answer="n"
+        fi
+    else
+        printf "%s" "$prompt" >&2
+        if ! IFS= read -r answer; then
+            answer="n"
+        fi
+    fi
+
+    printf '%s\n' "$answer"
+}
+
 # =============================================================================
 # execute_secure CMD [ROLE]
 #
@@ -92,10 +111,7 @@ execute_secure() {
 
                 local admin_confirm
                 echo -e "${_YEL}Admin, confirmer l'exécution ?${_RST}" >&2
-                printf "Tapez o pour confirmer, n pour annuler : " >&2
-                if ! read -r admin_confirm; then
-                    admin_confirm="n"
-                fi
+                admin_confirm="$(prompt_confirm "Tapez o pour confirmer, n pour annuler : ")"
                 if [[ "$admin_confirm" != "o" && "$admin_confirm" != "O" ]]; then
                     echo -e "${_CYN}[INFO]${_RST} Exécution annulée par l'admin." >&2
                     log_audit "ADMIN_CRITICAL_CANCELLED" "cmd=$cmd score=$score raison=$reasons"
@@ -112,10 +128,7 @@ execute_secure() {
 
             local confirm
             echo -e "${_YEL}Confirmer l'exécution ?${_RST}" >&2
-            printf "Tapez o pour confirmer, n pour annuler : " >&2
-            if ! read -r confirm; then
-                confirm="n"
-            fi
+            confirm="$(prompt_confirm "Tapez o pour confirmer, n pour annuler : ")"
             if [[ "$confirm" != "o" && "$confirm" != "O" ]]; then
                 echo -e "${_CYN}[INFO]${_RST} Exécution annulée par l'utilisateur." >&2
                 log_event "CANCELLED" "$cmd" "$score" "Annulée après avertissement"
