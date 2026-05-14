@@ -2,3 +2,5 @@
 logs/
 logs-demo/
 *.bak.*
+lib/thread_handler
+lib/thread_handler.exe

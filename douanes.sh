@@ -15,6 +15,8 @@ if [[ -n "${PWD_ORIG:-}" ]]; then
 fi
 LIB_DIR="$SCRIPT_DIR/lib"
 PROGRAM_NAME="douanes"
+THREAD_SRC="$LIB_DIR/thread_handler.c"
+THREAD_BIN="${DOUANES_THREAD_BIN:-$LIB_DIR/thread_handler}"
 
 ERR_UNKNOWN_OPTION=100
 ERR_MISSING_PARAMETER=101
@@ -25,19 +27,22 @@ EXEC_MODE="direct"
 RESTORE_DEFAULTS=0
 CUSTOM_LOG_DIR=""
 FORCE_ROLE=""
+INTERNAL_THREAD_WORKER=0
+THREAD_WORKER_ROLE=""
+THREAD_WORKER_CMD=""
 
 print_help() {
     cat <<'EOF'
 Douanes - Intermediaire securise pour commandes Linux
 
 Syntaxe:
-  ./douanes.sh [options] "commande"
+  douanes [options] "commande"
 
 Options:
   -h              Affiche cette aide detaillee.
   -s              Execute le traitement Douanes dans un sous-shell.
   -f              Execute le traitement par creation d'un processus fils.
-  -t              Execute le traitement dans un job arriere-plan assimile a un thread Bash.
+  -t              Execute le traitement via un vrai thread C pthread.
   -l <repertoire> Definit le repertoire des logs et du fichier history.log.
   -r              Restaure/reinitialise les logs par defaut. Admin uniquement.
   -a              Force l'execution en role admin. Necessite un utilisateur admin.
@@ -58,15 +63,15 @@ Codes d'erreur:
   103  Privileges administrateur requis.
 
 Exemples:
-  ./douanes.sh -h
-  ./douanes.sh "ls -la"
-  ./douanes.sh -s "echo hello"
-  ./douanes.sh -f "find . -maxdepth 2 -type f"
-  ./douanes.sh -t "grep -R TODO lib"
-  ./douanes.sh -l logs-demo "pwd"
-  ./douanes.sh -r
-  ./douanes.sh -a "reboot"
-  ./douanes.sh -u "reboot"
+  douanes -h
+  douanes "ls -la"
+  douanes -s "echo hello"
+  douanes -f "find . -maxdepth 2 -type f"
+  douanes -t "grep -R TODO lib"
+  douanes -l logs-demo "pwd"
+  douanes -r
+  douanes -a "reboot"
+  douanes -u "reboot"
 
 Journalisation:
   Les sorties stdout/stderr sont affichees au terminal et copiees dans history.log.
@@ -133,42 +138,101 @@ source_if_exists() {
     fi
 }
 
-while getopts ":hfstl:rau" opt; do
-    case "$opt" in
-        h)
-            print_help
-            exit 0
-            ;;
-        f)
-            EXEC_MODE="fork"
-            ;;
-        s)
-            EXEC_MODE="subshell"
-            ;;
-        t)
-            EXEC_MODE="thread"
-            ;;
-        l)
-            CUSTOM_LOG_DIR="$OPTARG"
-            ;;
-        r)
-            RESTORE_DEFAULTS=1
-            ;;
-        a)
-            FORCE_ROLE="admin"
-            ;;
-        u)
-            FORCE_ROLE="user"
-            ;;
-        :)
-            die_with_help "$ERR_MISSING_PARAMETER" "Option -$OPTARG requiert un parametre."
-            ;;
-        \?)
-            die_with_help "$ERR_UNKNOWN_OPTION" "Option inconnue : -$OPTARG"
-            ;;
-    esac
-done
-shift $((OPTIND - 1))
+shell_quote() {
+    local value="$1"
+    printf "'%s'" "${value//\'/\'\\\'\'}"
+}
+
+thread_runner_path() {
+    if [[ -x "$THREAD_BIN" ]]; then
+        printf '%s\n' "$THREAD_BIN"
+        return 0
+    fi
+
+    if [[ -x "$THREAD_BIN.exe" ]]; then
+        printf '%s\n' "$THREAD_BIN.exe"
+        return 0
+    fi
+
+    return 1
+}
+
+ensure_thread_runner() {
+    local runner
+
+    if [[ ! -f "$THREAD_SRC" ]]; then
+        return 1
+    fi
+
+    if runner="$(thread_runner_path)" && [[ "$runner" -nt "$THREAD_SRC" ]]; then
+        THREAD_BIN="$runner"
+        return 0
+    fi
+
+    if ! command -v gcc >/dev/null 2>&1; then
+        return 1
+    fi
+
+    if ! gcc -Wall -Wextra -O2 -pthread "$THREAD_SRC" -o "$THREAD_BIN" 2>/dev/null; then
+        return 1
+    fi
+
+    if runner="$(thread_runner_path)"; then
+        THREAD_BIN="$runner"
+        return 0
+    fi
+
+    return 1
+}
+
+if [[ "${1:-}" == "--thread-worker" ]]; then
+    if [[ $# -lt 3 ]]; then
+        die_with_help "$ERR_MISSING_PARAMETER" "Worker thread incomplet : role et commande requis."
+    fi
+    INTERNAL_THREAD_WORKER=1
+    THREAD_WORKER_ROLE="$2"
+    THREAD_WORKER_CMD="$3"
+    shift 3
+fi
+
+if (( INTERNAL_THREAD_WORKER == 0 )); then
+    while getopts ":hfstl:rau" opt; do
+        case "$opt" in
+            h)
+                print_help
+                exit 0
+                ;;
+            f)
+                EXEC_MODE="fork"
+                ;;
+            s)
+                EXEC_MODE="subshell"
+                ;;
+            t)
+                EXEC_MODE="thread"
+                ;;
+            l)
+                CUSTOM_LOG_DIR="$OPTARG"
+                ;;
+            r)
+                RESTORE_DEFAULTS=1
+                ;;
+            a)
+                FORCE_ROLE="admin"
+                ;;
+            u)
+                FORCE_ROLE="user"
+                ;;
+            :)
+                die_with_help "$ERR_MISSING_PARAMETER" "Option -$OPTARG requiert un parametre."
+                ;;
+            \?)
+                die_with_help "$ERR_UNKNOWN_OPTION" "Option inconnue : -$OPTARG"
+                ;;
+        esac
+    done
+    shift $((OPTIND - 1))
+fi
 
 LOG_DIR="${CUSTOM_LOG_DIR:-$(default_log_dir)}"
 export DOUANES_LOG_DIR="$LOG_DIR"
@@ -201,12 +265,17 @@ if (( RESTORE_DEFAULTS == 1 )); then
     exit 0
 fi
 
-if [[ $# -lt 1 ]]; then
-    die_with_help "$ERR_MISSING_PARAMETER" "Parametre obligatoire manquant : commande a analyser."
-fi
+if (( INTERNAL_THREAD_WORKER == 1 )); then
+    CMD="$THREAD_WORKER_CMD"
+    USER_ROLE="$THREAD_WORKER_ROLE"
+else
+    if [[ $# -lt 1 ]]; then
+        die_with_help "$ERR_MISSING_PARAMETER" "Parametre obligatoire manquant : commande a analyser."
+    fi
 
-CMD="$*"
-USER_ROLE="$(get_user_role "$(get_current_user)")"
+    CMD="$*"
+    USER_ROLE="$(get_user_role "$(get_current_user)")"
+fi
 
 case "$FORCE_ROLE" in
     admin)
@@ -220,7 +289,9 @@ case "$FORCE_ROLE" in
         ;;
 esac
 
-echo "[ROLE] Execution en tant que $USER_ROLE"
+if (( INTERNAL_THREAD_WORKER == 0 )); then
+    echo "[ROLE] Execution en tant que $USER_ROLE"
+fi
 
 run_security_flow() {
     local cmd="$1"
@@ -247,6 +318,11 @@ run_security_flow() {
     return "$rc"
 }
 
+if (( INTERNAL_THREAD_WORKER == 1 )); then
+    run_security_flow "$CMD" "$USER_ROLE"
+    exit $?
+fi
+
 case "$EXEC_MODE" in
     direct)
         run_security_flow "$CMD" "$USER_ROLE"
@@ -262,10 +338,16 @@ case "$EXEC_MODE" in
         wait "$child_pid"
         ;;
     thread)
-        echo "[MODE] thread - job Bash arriere-plan"
-        ( run_security_flow "$CMD" "$USER_ROLE" ) &
-        thread_pid=$!
-        wait "$thread_pid"
+        if ensure_thread_runner; then
+            worker_cmd="cd $(shell_quote "$SCRIPT_DIR") && ./douanes.sh --thread-worker $(shell_quote "$USER_ROLE") $(shell_quote "$CMD")"
+            echo "[MODE] thread - pthread C"
+            "$THREAD_BIN" bash -lc "$worker_cmd"
+        else
+            echo "[MODE] thread - fallback job Bash"
+            ( run_security_flow "$CMD" "$USER_ROLE" ) &
+            thread_pid=$!
+            wait "$thread_pid"
+        fi
         ;;
     *)
         die_with_help "$ERR_UNKNOWN_OPTION" "Mode d'execution invalide : $EXEC_MODE"
